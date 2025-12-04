@@ -20,7 +20,7 @@ class ModelParams:
     V_QD: float = 0.0
 
     #Parameter Sweeps
-    Ez_low: float = 0.1
+    Ez_low: float = 0.2
     Ez_high: float = 1.25
     Ez_points: int = 150
     mu_low: float = -0.3
