@@ -5,6 +5,18 @@ from config_1D_nanowire import ModelParams
 from pfapack.ctypes import pfaffian as cpf
 import scipy.linalg as la
 
+def Gen_disorder(nd, sigma, Length, A_max=3):
+    x_n = np.array([random.randint(0,Length) for _ in range(nd)])
+    wire = np.arange(0,Length,1)
+    Disorder = np.zeros(Length)
+    for i in range(nd):
+        A_n = random.uniform(-A_max, A_max)
+        Disorder += A_n*np.exp(-1.0*((wire-x_n[i])**2.0)/(2.0*(sigma**2.0)))
+    Disorder -= np.mean(Disorder)
+    Disorder /= np.sqrt(np.mean(Disorder**2.0))
+    Disorder -= np.mean(Disorder)
+    return Disorder
+
 def onsite_h(i: int, H: np.ndarray, mu: float, Ez: float, params: ModelParams, No_QD=True):
     Length = params.Length
     t = params.t
