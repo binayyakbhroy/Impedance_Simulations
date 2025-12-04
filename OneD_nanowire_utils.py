@@ -5,6 +5,8 @@ from config_1D_nanowire import ModelParams
 from pfapack.ctypes import pfaffian as cpf
 import scipy.linalg as la
 import random
+from joblib import Parallel, delayed
+from copy import deepcopy
 
 def Gen_disorder(nd, sigma, Length, A_max=3):
     x_n = np.array([random.randint(0,Length) for _ in range(nd)])
@@ -198,17 +200,24 @@ def Diagonalize(H: np.ndarray, extract_exact = True, num_eigvals=30):
     eneg, eigen_vec = eneg[ordering], eigen_vec[:,ordering]
     return eneg, eigen_vec
 
-def Energy_spectrum(mu: float, params: ModelParams, No_QD=True, num_eigvals=30):
+def Energy_spectrum(mu: float, params: ModelParams, No_QD=True, num_eigvals=30, n_jobs=-1):
     Ez_low = params.Ez_low
     Ez_high = params.Ez_high
     Ez_points = params.Ez_points
     Ez_sweep = np.linspace(Ez_low, Ez_high, Ez_points)
     Energy_eigenvals = []
-    for Ez0 in tqdm(Ez_sweep):
-        H = construct_Hamil(mu, Ez0, phi=0.0, params=params, No_QD=No_QD)
+
+    def _worker_energy_spectrum(Ez0, mu, params, No_QD, num_eigvals):
+        H = construct_Hamil(mu, Ez0, phi=0.0, params=deepcopy(params), No_QD=No_QD)
         eigenvals, _ = Diagonalize(H, extract_exact=False, num_eigvals=num_eigvals)
-        Energy_eigenvals.append(eigenvals)
-    Energy_eigenvals = np.array(Energy_eigenvals)
+        return eigenvals
+    
+    tasks = [delayed(_worker_energy_spectrum)(Ez0, mu, deepcopy(params), No_QD, num_eigvals)
+             for Ez0 in tqdm(Ez_sweep, desc="Ez sweep")]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(tasks)
+
+    # results is list of eigenvalue arrays per Ez
+    Energy_eigenvals = np.array(results)
     return Energy_eigenvals
 
 def wavefunc(mu: float, Ez: float, phi0: float, No_QD: bool, params: ModelParams):
@@ -242,133 +251,188 @@ def Energy_tracker(energies, wavefunctions, initial_wf):
     new_wf0 = -eigen_vec[:, idx] if phase<0.0 else eigen_vec[:, idx]
     return new_E0, new_wf0
 
-def Energy_tracker_phi(mu: float, Ez: float, params: ModelParams, No_QD=False, end_hopping=False):
+def Energy_tracker_phi(mu: float, Ez: float, params: ModelParams, No_QD=False, end_hopping=False, n_jobs=-1):
     phi_sweep = np.linspace(params.phi_low, params.phi_high, params.phi_points)
     lowest_pos_E0, lowest_neg_E0, wf0, wf0_n = [], [], [], []
-    Hamiltonian = construct_Hamil(mu, Ez, phi=0.0, params=params, No_QD=No_QD, end_hopping=end_hopping)
-    eneg_vals0, eigen_vec0 = np.linalg.eigh(Hamiltonian)
-    eneg_vals0, eigen_vec0 = eneg_vals0[np.argsort(np.abs(eneg_vals0))], eigen_vec0[:,np.argsort(np.abs(eneg_vals0))]
-    if eneg_vals0[0]>0.0:
-        wf0 = eigen_vec0[:,0]
-        wf0_n = eigen_vec0[:,1]
+
+    def _worker_eigpair(mu, Ez, phi0, params, No_QD, end_hopping):
+        H = construct_Hamil(mu, Ez, phi=phi0, params=deepcopy(params), No_QD=No_QD, end_hopping=end_hopping)
+        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=5)
+        order = np.argsort(np.abs(eigvals))
+        return eigvals[order], eigvecs[:, order]
+    
+    tasks = [delayed(_worker_eigpair)(mu, Ez, phi0, deepcopy(params), No_QD, end_hopping) for phi0 in tqdm(phi_sweep, desc="phi eigs")]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(tasks)
+
+    # results[i] = (ordered_eigvals, ordered_eigvecs)
+    ordered_vals = [res[0] for res in results]
+    ordered_vecs = [res[1] for res in results]
+
+    # sequential tracking using the precomputed ordered_vals/ordered_vecs (same as original loop)
+    lowest_pos_E0, lowest_neg_E0 = [], []
+    # determine initial wf0/wf0_n from the phi=0 point (results[0])
+    eigvals0, eigvec0 = ordered_vals[0], ordered_vecs[0]
+    if eigvals0[0] > 0.0:
+        wf0 = eigvec0[:, 0]; wf0_n = eigvec0[:, 1]
     else:
-        wf0 = eigen_vec0[:,1]
-        wf0_n = eigen_vec0[:,0]
-    for phi0 in tqdm(phi_sweep):
-        Hamiltonian = construct_Hamil(mu, Ez, phi=phi0, params=params, No_QD=No_QD, end_hopping=end_hopping)
-        eneg_vals, eigen_vec = Diagonalize(Hamiltonian, extract_exact=False, num_eigvals=5)
-        eneg_vals, eigen_vec = eneg_vals[np.argsort(np.abs(eneg_vals))], eigen_vec[:,np.argsort(np.abs(eneg_vals))]
-        overlaps = np.abs(np.matmul(np.conj(wf0).T,eigen_vec))
-        overlaps_n = np.abs(np.matmul(np.conj(wf0_n).T,eigen_vec))
-        idx = np.argmax(overlaps)
-        idx_n = np.argmax(overlaps_n)
+        wf0 = eigvec0[:, 1]; wf0_n = eigvec0[:, 0]
+
+    for eneg_vals, eigen_vec in zip(ordered_vals, ordered_vecs):
+        overlaps = np.abs(np.matmul(np.conj(wf0).T, eigen_vec))
+        overlaps_n = np.abs(np.matmul(np.conj(wf0_n).T, eigen_vec))
+        idx = np.argmax(overlaps); idx_n = np.argmax(overlaps_n)
         lowest_pos_E0.append(eneg_vals[idx])
         lowest_neg_E0.append(eneg_vals[idx_n])
         phase = np.vdot(np.conj(wf0).T, eigen_vec[:, idx])
-        phase_n = np.vdot(np.conj(wf0_n).T, eigen_vec[:, idx])
-        wf0 = -eigen_vec[:, idx] if phase<0.0 else eigen_vec[:, idx]
-        wf0_n = -eigen_vec[:, idx_n] if phase_n<0.0 else eigen_vec[:, idx_n]
-    lowest_pos_E0 = np.array(lowest_pos_E0)
-    lowest_neg_E0 = np.array(lowest_neg_E0)
-    return lowest_pos_E0, lowest_neg_E0
+        phase_n = np.vdot(np.conj(wf0_n).T, eigen_vec[:, idx_n])
+        wf0 = -eigen_vec[:, idx] if phase < 0.0 else eigen_vec[:, idx]
+        wf0_n = -eigen_vec[:, idx_n] if phase_n < 0.0 else eigen_vec[:, idx_n]
 
-def Energy_tracker_VQD(mu: float, Ez: float, phi0: float, params: ModelParams, No_QD=False, end_hopping=False):
+    return np.array(lowest_pos_E0), np.array(lowest_neg_E0)
+
+def Energy_tracker_VQD(mu: float, Ez: float, phi0: float, params: ModelParams, No_QD=False, end_hopping=False, n_jobs=-1):
     vqd_sweep = np.linspace(params.V_QD_low, params.V_QD_high, params.V_QD_points)
     lowest_pos_E0, lowest_neg_E0, wf0, wf0_n = [], [], [], []
-    Hamiltonian = construct_Hamil(mu, Ez, phi=phi0, params=params, No_QD=No_QD, end_hopping=end_hopping)
-    eneg_vals0, eigen_vec0 = np.linalg.eigh(Hamiltonian)
-    eneg_vals0, eigen_vec0 = eneg_vals0[np.argsort(np.abs(eneg_vals0))], eigen_vec0[:,np.argsort(np.abs(eneg_vals0))]
-    if eneg_vals0[0]>0.0:
-        wf0 = eigen_vec0[:,0]
-        wf0_n = eigen_vec0[:,1]
+
+    def _worker_eigpair_vqd(mu, Ez, phi0, vqd0, params, No_QD, end_hopping):
+        p = deepcopy(params)
+        p.V_QD = vqd0
+        H = construct_Hamil(mu, Ez, phi=phi0, params=p, No_QD=No_QD, end_hopping=end_hopping)
+        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=5)
+        order = np.argsort(np.abs(eigvals))
+        return eigvals[order], eigvecs[:, order]
+    
+    tasks = [
+        delayed(_worker_eigpair_vqd)(mu, Ez, phi0, vqd0, deepcopy(params), No_QD, end_hopping)
+        for vqd0 in tqdm(vqd_sweep, desc="precomputing V_QD eigs")
+    ]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(tasks)
+
+    # 2) collect ordered eigenvals/eigenvecs
+    ordered_vals = [res[0] for res in results]
+    ordered_vecs = [res[1] for res in results]
+
+    # 3) sequential tracking (same logic as original function)
+    lowest_pos_E0, lowest_neg_E0 = [], []
+
+    # initialize wf0 and wf0_n from the first point (vqd_sweep[0])
+    eigvals0, eigen_vec0 = ordered_vals[0], ordered_vecs[0]
+    if eigvals0[0] > 0.0:
+        wf0 = eigen_vec0[:, 0]
+        wf0_n = eigen_vec0[:, 1]
     else:
-        wf0 = eigen_vec0[:,1]
-        wf0_n = eigen_vec0[:,0]
-    for vqd0 in tqdm(vqd_sweep):
-        params.V_QD = vqd0
-        Hamiltonian = construct_Hamil(mu, Ez, phi=phi0, params=params, No_QD=No_QD, end_hopping=end_hopping)
-        eneg_vals, eigen_vec = Diagonalize(Hamiltonian, extract_exact=False, num_eigvals=5)
-        eneg_vals, eigen_vec = eneg_vals[np.argsort(np.abs(eneg_vals))], eigen_vec[:,np.argsort(np.abs(eneg_vals))]
-        overlaps = np.abs(np.matmul(np.conj(wf0).T,eigen_vec))
-        overlaps_n = np.abs(np.matmul(np.conj(wf0_n).T,eigen_vec))
+        wf0 = eigen_vec0[:, 1]
+        wf0_n = eigen_vec0[:, 0]
+
+    for eneg_vals, eigen_vec in zip(ordered_vals, ordered_vecs):
+        overlaps = np.abs(np.matmul(np.conj(wf0).T, eigen_vec))
+        overlaps_n = np.abs(np.matmul(np.conj(wf0_n).T, eigen_vec))
         idx = np.argmax(overlaps)
         idx_n = np.argmax(overlaps_n)
         lowest_pos_E0.append(eneg_vals[idx])
         lowest_neg_E0.append(eneg_vals[idx_n])
         phase = np.vdot(np.conj(wf0).T, eigen_vec[:, idx])
-        phase_n = np.vdot(np.conj(wf0_n).T, eigen_vec[:, idx])
-        wf0 = -eigen_vec[:, idx] if phase<0.0 else eigen_vec[:, idx]
-        wf0_n = -eigen_vec[:, idx_n] if phase_n<0.0 else eigen_vec[:, idx_n]
-    lowest_pos_E0 = np.array(lowest_pos_E0)
-    lowest_neg_E0 = np.array(lowest_neg_E0)
-    return lowest_pos_E0, lowest_neg_E0
+        phase_n = np.vdot(np.conj(wf0_n).T, eigen_vec[:, idx_n])
+        wf0 = -eigen_vec[:, idx] if phase < 0.0 else eigen_vec[:, idx]
+        wf0_n = -eigen_vec[:, idx_n] if phase_n < 0.0 else eigen_vec[:, idx_n]
 
-def Energy_spectrum_phi(mu: float, Ez: float, params: ModelParams, consider_all_states=False, No_QD=False, end_hopping=False, num_eigvals=30):
+    return np.array(lowest_pos_E0), np.array(lowest_neg_E0)
+
+def Energy_spectrum_phi(mu: float, Ez: float, params: ModelParams, consider_all_states=False, No_QD=False, end_hopping=False, num_eigvals=30, n_jobs=-1):
     phi_low = params.phi_low
     phi_high = params.phi_high
     phi_points = params.phi_points
     phi_sweep = np.linspace(phi_low, phi_high, phi_points)
     Energy_eigenvals_v_phi = []
     Energy_even_parity, Energy_odd_parity = [], []
-    for phi0 in tqdm(phi_sweep):
-        H = construct_Hamil(mu, Ez, phi0, params=params, calc_pfaffian=False, No_QD=No_QD, end_hopping=end_hopping)
-        eigenvals, _ = Diagonalize(H, extract_exact=consider_all_states, num_eigvals=num_eigvals)
-        order = np.argsort(np.abs(eigenvals))
-        ordered_eigenvals = eigenvals[order]
+
+    def _worker_eigpair_phi(phi0, mu, Ez, params, extract_exact, No_QD, end_hopping, num_eigvals):
+        H = construct_Hamil(mu, Ez, phi0, params=deepcopy(params), No_QD=No_QD, end_hopping=end_hopping)
+        eigvals, eigvecs = Diagonalize(H, extract_exact=extract_exact, num_eigvals=num_eigvals)
+        return phi0, eigvals, eigvecs
+    
+    # parallel compute eigenpairs for each phi
+    tasks = [delayed(_worker_eigpair_phi)(phi0, mu, Ez, deepcopy(params), consider_all_states, No_QD, end_hopping, num_eigvals)
+             for phi0 in phi_sweep]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(tasks)
+
+    # sort results back in phi order (in case Parallel shuffles)
+    results_sorted = sorted(results, key=lambda x: x[0])
+    eigenvals_list = [res[1] for res in results_sorted]
+    eigenvecs_list = [res[2] for res in results_sorted]
+
+    # sequential post-processing (parity lists, tracking etc.) using eigenvals_list/eigenvecs_list
+    Energy_even_parity, Energy_odd_parity = [], []
+    Energy_eigenvals_v_phi = []
+    for eigvals, eigvecs in zip(eigenvals_list, eigenvecs_list):
+        order = np.argsort(np.abs(eigvals))
+        ordered_eigenvals = eigvals[order]
+        # same logic as original: build parity lists etc.
+        Energy_eigenvals_v_phi.append(eigvals)
         Energy_even_temp, Energy_odd_temp = [], []
-        if ordered_eigenvals[0]<0.:
-            Energy_even_temp.append(ordered_eigenvals[0])
-            Energy_odd_temp.append(ordered_eigenvals[1])
+        if ordered_eigenvals[0] < 0.:
+            Energy_even_temp.append(ordered_eigenvals[0]); Energy_odd_temp.append(ordered_eigenvals[1])
         else:
-            Energy_even_temp.append(ordered_eigenvals[1])
-            Energy_odd_temp.append(ordered_eigenvals[0])
+            Energy_even_temp.append(ordered_eigenvals[1]); Energy_odd_temp.append(ordered_eigenvals[0])
         for ord_energy in ordered_eigenvals[2:]:
-            if ord_energy<0.0:
+            if ord_energy < 0.0:
                 Energy_even_temp.append(ord_energy)
                 Energy_odd_temp.append(ord_energy)
         Energy_even_parity.append(Energy_even_temp)
         Energy_odd_parity.append(Energy_odd_temp)
-        Energy_eigenvals_v_phi.append(eigenvals)
-    even_lengths = [len(sublist_even) for sublist_even in Energy_even_parity] 
-    odd_lengths = [len(sublist_odd) for sublist_odd in Energy_odd_parity]
+
+    # normalize lengths as in original function
+    even_lengths = [len(x) for x in Energy_even_parity]
+    odd_lengths = [len(x) for x in Energy_odd_parity]
     min_len = min(min(even_lengths), min(odd_lengths))
-    Energy_even_parity = [sublist_even[:min_len] for sublist_even in Energy_even_parity]
-    Energy_odd_parity = [sublist_odd[:min_len] for sublist_odd in Energy_odd_parity]
+    Energy_even_parity = np.array([lst[:min_len] for lst in Energy_even_parity])
+    Energy_odd_parity = np.array([lst[:min_len] for lst in Energy_odd_parity])
     Energy_eigenvals_v_phi = np.array(Energy_eigenvals_v_phi)
-    Energy_even_parity = np.array(Energy_even_parity)
-    Energy_odd_parity = np.array(Energy_odd_parity)
+
     return Energy_eigenvals_v_phi, Energy_even_parity, Energy_odd_parity
 
-def Energy_spectrum_v_VQD(mu: float, Ez: float, phi: float, params: ModelParams, consider_all_states=False, num_eigvals=30):
+def Energy_spectrum_v_VQD(mu: float, Ez: float, phi: float, params: ModelParams, consider_all_states=False, num_eigvals=30, n_jobs=-1):
     V_QD_low = params.V_QD_low
     V_QD_high = params.V_QD_high
     V_QD_points = params.V_QD_points
     V_QD_sweep = np.linspace(V_QD_low, V_QD_high, V_QD_points)
     Energy_eigenvals_v_VQD = []
     Energy_even_parity, Energy_odd_parity = [], []
-    for V_QD0 in tqdm(V_QD_sweep):
-        params.V_QD = V_QD0
-        H = construct_Hamil(mu, Ez, phi=phi, params=params, No_QD=False)
-        eigenvals, _ = Diagonalize(H, extract_exact=consider_all_states, num_eigvals=num_eigvals)
-        Energy_eigenvals_v_VQD.append(eigenvals)
-        order = np.argsort(np.abs(eigenvals))
-        ordered_eigenvals = eigenvals[order]
+
+    def _worker_eigpair_vqd(V_QD0, mu, Ez, phi, params, num_eigvals, extract_exact):
+        p = deepcopy(params); p.V_QD = V_QD0
+        H = construct_Hamil(mu, Ez, phi=phi, params=p, No_QD=False)
+        eigvals, eigvecs = Diagonalize(H, extract_exact=extract_exact, num_eigvals=num_eigvals)
+        return eigvals, eigvecs
+    
+    tasks = [delayed(_worker_eigpair_vqd)(vqd, mu, Ez, phi, deepcopy(params), num_eigvals, consider_all_states)
+             for vqd in tqdm(V_QD_sweep, desc="V_QD eigs")]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(tasks)
+    # results -> list of (eigvals_ordered, eigvecs_ordered) in same V_QD order
+    eigenvals_list = [res[0] for res in results]
+    eigenvecs_list = [res[1] for res in results]
+    Energy_eigenvals_v_VQD = np.array(eigenvals_list)
+    # now sequentially perform parity extraction / building Energy_even_parity, Energy_odd_parity
+    Energy_even_parity, Energy_odd_parity = [], []
+    for eigvals in eigenvals_list:
+        order = np.argsort(np.abs(eigvals))
+        ordered_eigenvals = eigvals[order]
         Energy_even_temp, Energy_odd_temp = [], []
-        if ordered_eigenvals[0]<0.:
-            Energy_even_temp.append(ordered_eigenvals[0])
-            Energy_odd_temp.append(ordered_eigenvals[1])
+        if ordered_eigenvals[0] < 0.:
+            Energy_even_temp.append(ordered_eigenvals[0]); Energy_odd_temp.append(ordered_eigenvals[1])
         else:
-            Energy_even_temp.append(ordered_eigenvals[1])
-            Energy_odd_temp.append(ordered_eigenvals[0])
+            Energy_even_temp.append(ordered_eigenvals[1]); Energy_odd_temp.append(ordered_eigenvals[0])
         for ord_energy in ordered_eigenvals[2:]:
-            if ord_energy<0.0:
-                Energy_even_temp.append(ord_energy)
-                Energy_odd_temp.append(ord_energy)
-        Energy_even_parity.append(Energy_even_temp)
-        Energy_odd_parity.append(Energy_odd_temp)
-    Energy_even_parity = np.array(Energy_even_parity)
-    Energy_odd_parity = np.array(Energy_odd_parity)
-    Energy_eigenvals_v_VQD = np.array(Energy_eigenvals_v_VQD)
+            if ord_energy < 0.0:
+                Energy_even_temp.append(ord_energy); Energy_odd_temp.append(ord_energy)
+        Energy_even_parity.append(Energy_even_temp); Energy_odd_parity.append(Energy_odd_temp)
+
+    # normalize lengths to min_len as in original function
+    even_lengths = [len(x) for x in Energy_even_parity]
+    odd_lengths = [len(x) for x in Energy_odd_parity]
+    min_len = min(min(even_lengths), min(odd_lengths))
+    Energy_even_parity = np.array([lst[:min_len] for lst in Energy_even_parity])
+    Energy_odd_parity = np.array([lst[:min_len] for lst in Energy_odd_parity])
     return Energy_eigenvals_v_VQD, Energy_even_parity, Energy_odd_parity
 
 def sign(x):
