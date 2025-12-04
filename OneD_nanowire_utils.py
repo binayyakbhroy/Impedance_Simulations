@@ -4,6 +4,7 @@ from scipy import sparse
 from config_1D_nanowire import ModelParams
 from pfapack.ctypes import pfaffian as cpf
 import scipy.linalg as la
+import random
 
 def Gen_disorder(nd, sigma, Length, A_max=3):
     x_n = np.array([random.randint(0,Length) for _ in range(nd)])
