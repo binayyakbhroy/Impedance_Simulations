@@ -41,6 +41,12 @@ def capacitance(energies: np.ndarray, eigenfunctions: np.ndarray, params: ModelP
     qd_wfs_pos = np.array(qd_wfs_pos)
     qd_wfs_neg = np.array(qd_wfs_neg)
 
+    min_len = min(len(Eneg_pos), len(Eneg_neg))
+    Eneg_pos = Eneg_pos[:min_len]
+    Eneg_neg = Eneg_neg[:min_len]
+    qd_wfs_pos = qd_wfs_pos[:,:min_len]
+    qd_wfs_neg = qd_wfs_neg[:,:min_len]
+
     C_const = np.matmul(np.conj(qd_wfs_pos[1:,:]), np.matmul(cap_obs_op, qd_wfs_neg[1:,:].T))
     C_even = np.matmul(np.conj(qd_wfs_pos[0,:]), np.matmul(cap_obs_op, qd_wfs_neg[1:,:].T))
     C_odd = np.matmul(np.conj(qd_wfs_neg[0,:]), np.matmul(cap_obs_op, qd_wfs_neg[1:,:].T))
@@ -246,6 +252,11 @@ def inductance(phi: float, energies: np.ndarray, wavefunctions: np.ndarray, para
     eneg_pos = np.array(eneg_pos)
     eneg_neg = np.array(eneg_neg)
 
+    min_len = min(len(eneg_pos), len(eneg_neg))
+    eneg_pos = eneg_pos[:min_len]
+    eneg_neg = eneg_neg[:min_len]
+    positive_wavefunctions = positive_wavefunctions[:,:min_len]
+    negative_wavefunctions = negative_wavefunctions[:,:min_len]
     
     L_const = expectation_value(positive_wavefunctions[1:, :], J_operator, negative_wavefunctions[1:, :])
     L_odd = expectation_value(negative_wavefunctions[0, :], J_operator, negative_wavefunctions[1:, :])
