@@ -230,14 +230,14 @@ def wavefunc(mu: float, Ez: float, phi0: float, No_QD: bool, params: ModelParams
     wf1 = np.abs((1.0/2.0**0.5)*(ordered_eigenfunctions[:,0] + np.conj(ordered_eigenfunctions[:,1])))
     wf2 = np.abs((-1.0j/2.0**0.5)*(ordered_eigenfunctions[:,0] - np.conj(ordered_eigenfunctions[:,1])))
     quasi_wf1 = np.abs((1.0/2.0**0.5)*(ordered_eigenfunctions[:,2] + np.conj(ordered_eigenfunctions[:,3])))
-    quasi_wf1 = np.abs((-1.0j/2.0**0.5)*(ordered_eigenfunctions[:,2] - np.conj(ordered_eigenfunctions[:,3])))
+    quasi_wf2 = np.abs((-1.0j/2.0**0.5)*(ordered_eigenfunctions[:,2] - np.conj(ordered_eigenfunctions[:,3])))
     wavefunc_length = params.Length
     if not No_QD:
         wavefunc_length = params.Length + 1
     mf1 = wf1[0:4*wavefunc_length:4]**2.0 + wf1[1:4*wavefunc_length:4]**2.0 + wf1[2:4*wavefunc_length:4]**2.0 + wf1[3:4*wavefunc_length:4]**2.0
     mf2 = wf2[0:4*wavefunc_length:4]**2.0 + wf2[1:4*wavefunc_length:4]**2.0 + wf2[2:4*wavefunc_length:4]**2.0 + wf2[3:4*wavefunc_length:4]**2.0
     qmf1 = quasi_wf1[0:4*wavefunc_length:4]**2.0 + quasi_wf1[1:4*wavefunc_length:4]**2.0 + quasi_wf1[2:4*wavefunc_length:4]**2.0 + quasi_wf1[3:4*wavefunc_length:4]**2.0
-    qmf2 = quasi_wf1[0:4*wavefunc_length:4]**2.0 + quasi_wf1[1:4*wavefunc_length:4]**2.0 + quasi_wf1[2:4*wavefunc_length:4]**2.0 + quasi_wf1[3:4*wavefunc_length:4]**2.0
+    qmf2 = quasi_wf2[0:4*wavefunc_length:4]**2.0 + quasi_wf2[1:4*wavefunc_length:4]**2.0 + quasi_wf2[2:4*wavefunc_length:4]**2.0 + quasi_wf2[3:4*wavefunc_length:4]**2.0
     return mf1, mf2, qmf1, qmf2, ordered_eigenvals[0:4] 
 
 def Energy_tracker(energies, wavefunctions, initial_wf):
