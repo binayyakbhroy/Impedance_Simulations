@@ -251,13 +251,73 @@ def Energy_tracker(energies, wavefunctions, initial_wf):
     new_wf0 = -eigen_vec[:, idx] if phase<0.0 else eigen_vec[:, idx]
     return new_E0, new_wf0
 
+def locate_initial_wf(mu: float, Ez: float, params: ModelParams, No_QD=False, end_hopping=False):
+    """
+    In case of tracking the lowest energy mode from the uncoupled regime of the system.
+    """
+    w_left_target = params.w_left
+    w_right_target = params.w_right
+    w_left_swp = np.linspace(0.001, w_left_target, 20, endpoint=True)
+    w_right_swp = np.linspace(0.001, w_right_target, 20, endpoint=True)
+    p_locate = deepcopy(params)
+    p_locate.w_left = 0.001
+    p_locate.w_right = 0.001
+    wf0, wf0_n = [], []
+    wf_target, wf_n_target = [], []
+    target_E_pos, target_E_neg = 0.0, 0.0
+    H_initial = construct_Hamil(mu=mu, Ez=Ez, phi=0.0, params=p_locate, No_QD=No_QD, end_hopping=end_hopping)
+    eigvals0, eigvec0 = Diagonalize(H_initial, extract_exact=False, num_eigvals=10)
+    ordering = np.argsort(np.abs(eigvals0))
+    eigvals0, eigvec0 = eigvals0[ordering], eigvec0[:,ordering]
+    if eigvals0[0] > 0.0:
+        wf0 = eigvec0[:, 0]; wf0_n = eigvec0[:, 1]
+    else:
+        wf0 = eigvec0[:, 1]; wf0_n = eigvec0[:, 0]
+    wf0_t = wf0
+    wf0_n_t = wf0_n
+    for w_left0 in w_left_swp[1:]:
+        p_locate = deepcopy(params)
+        p_locate.w_left = w_left0
+        p_locate.w_right = 0.001
+        H = construct_Hamil(mu=mu, Ez=Ez, phi=0.0, params=p_locate, No_QD=No_QD, end_hopping=end_hopping)
+        ## num_eigvals might need adjustment based on how large the system is and how strong the coupling to QD is
+        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=40)
+        overlaps = np.abs(np.matmul(np.conj(wf0_t),eigvecs))
+        overlaps_n = np.abs(np.matmul(np.conj(wf0_n_t),eigvecs))
+        idx = np.argmax(overlaps); idx_n = np.argmax(overlaps_n)
+        target_E_pos = eigvals[idx]; target_E_neg = eigvals[idx_n]
+        print(target_E_neg, target_E_pos, w_left0, 0.001)
+        phase = np.vdot(wf0_t, eigvecs[:, idx])
+        phase_n = np.vdot(wf0_n_t, eigvecs[:, idx_n])
+        wf0_t = -eigvecs[:, idx] if phase < 0.0 else eigvecs[:, idx]
+        wf0_n_t = -eigvecs[:, idx_n] if phase_n < 0.0 else eigvecs[:, idx_n]
+        wf_target = wf0_t; wf_n_target = wf0_n_t
+    for w_right0 in w_right_swp[1:]:
+        p_locate = deepcopy(params)
+        p_locate.w_left = w_left_target
+        p_locate.w_right = w_right0
+        H = construct_Hamil(mu=mu, Ez=Ez, phi=0.0, params=p_locate, No_QD=No_QD, end_hopping=end_hopping)
+        ## num_eigvals might need adjustment based on how large the system is and how strong the coupling to QD is
+        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=40)
+        overlaps = np.abs(np.matmul(np.conj(wf0_t),eigvecs))
+        overlaps_n = np.abs(np.matmul(np.conj(wf0_n_t),eigvecs))
+        idx = np.argmax(overlaps); idx_n = np.argmax(overlaps_n)
+        target_E_pos = eigvals[idx]; target_E_neg = eigvals[idx_n]
+        print(target_E_neg, target_E_pos, w_left_target, w_right0)
+        phase = np.vdot(wf0_t, eigvecs[:, idx])
+        phase_n = np.vdot(wf0_n_t, eigvecs[:, idx_n])
+        wf0_t = -eigvecs[:, idx] if phase < 0.0 else eigvecs[:, idx]
+        wf0_n_t = -eigvecs[:, idx_n] if phase_n < 0.0 else eigvecs[:, idx_n]
+        wf_target = wf0_t; wf_n_target = wf0_n_t
+    return target_E_pos, target_E_neg, wf_target, wf_n_target
+
 def Energy_tracker_phi(mu: float, Ez: float, params: ModelParams, No_QD=False, end_hopping=False, n_jobs=-1):
     phi_sweep = np.linspace(params.phi_low, params.phi_high, params.phi_points)
     lowest_pos_E0, lowest_neg_E0, wf0, wf0_n = [], [], [], []
 
     def _worker_eigpair(mu, Ez, phi0, params, No_QD, end_hopping):
         H = construct_Hamil(mu, Ez, phi=phi0, params=deepcopy(params), No_QD=No_QD, end_hopping=end_hopping)
-        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=5)
+        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=2)
         order = np.argsort(np.abs(eigvals))
         return eigvals[order], eigvecs[:, order]
     
@@ -283,8 +343,8 @@ def Energy_tracker_phi(mu: float, Ez: float, params: ModelParams, No_QD=False, e
         idx = np.argmax(overlaps); idx_n = np.argmax(overlaps_n)
         lowest_pos_E0.append(eneg_vals[idx])
         lowest_neg_E0.append(eneg_vals[idx_n])
-        phase = np.vdot(np.conj(wf0).T, eigen_vec[:, idx])
-        phase_n = np.vdot(np.conj(wf0_n).T, eigen_vec[:, idx_n])
+        phase = np.vdot(wf0, eigen_vec[:, idx])
+        phase_n = np.vdot(wf0_n, eigen_vec[:, idx_n])
         wf0 = -eigen_vec[:, idx] if phase < 0.0 else eigen_vec[:, idx]
         wf0_n = -eigen_vec[:, idx_n] if phase_n < 0.0 else eigen_vec[:, idx_n]
 
@@ -298,7 +358,7 @@ def Energy_tracker_VQD(mu: float, Ez: float, phi0: float, params: ModelParams, N
         p = deepcopy(params)
         p.V_QD = vqd0
         H = construct_Hamil(mu, Ez, phi=phi0, params=p, No_QD=No_QD, end_hopping=end_hopping)
-        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=5)
+        eigvals, eigvecs = Diagonalize(H, extract_exact=False, num_eigvals=2)
         order = np.argsort(np.abs(eigvals))
         return eigvals[order], eigvecs[:, order]
     

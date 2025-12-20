@@ -69,7 +69,7 @@ def capacitance(energies: np.ndarray, eigenfunctions: np.ndarray, params: ModelP
 
 def Capacitance_vs_phi(mu: float, Ez: float, params: ModelParams,
                        consider_all_states=False, number_of_states=30,
-                       n_jobs=6, n_return=5):
+                       n_jobs=6, n_return=2):
     phi_low = params.phi_low
     phi_high = params.phi_high
     phi_points = params.phi_points
@@ -110,7 +110,7 @@ def Capacitance_vs_phi(mu: float, Ez: float, params: ModelParams,
         Ce_ar.append(Ce); Co_ar.append(Co)
     return np.array(Ce_ar), np.array(Co_ar)
 
-def Capacitance_vs_VQD(mu: float, Ez: float, params: ModelParams, consider_all_states=False, number_of_states=30, n_jobs=6, n_return=5):
+def Capacitance_vs_VQD(mu: float, Ez: float, params: ModelParams, consider_all_states=False, number_of_states=30, n_jobs=6, n_return=2):
     V_QD_low = params.V_QD_low
     V_QD_high = params.V_QD_high
     V_QD_points = params.V_QD_points
@@ -299,7 +299,7 @@ def inductance(phi: float, energies: np.ndarray, wavefunctions: np.ndarray, para
 
 def inductance_vs_phi(mu: float, Ez: float, params: ModelParams,
                       include_diamagnetic_term=True, consider_all_states=False,
-                      number_of_states=30, n_jobs=6, n_return=5):
+                      number_of_states=30, n_jobs=6, n_return=2):
     phi_low = params.phi_low
     phi_high = params.phi_high
     phi_points = params.phi_points
@@ -349,7 +349,7 @@ def inductance_vs_phi(mu: float, Ez: float, params: ModelParams,
         Le_D_ar.append(Le_D); Lo_D_ar.append(Lo_D)
     return np.array(Le_P_ar), np.array(Le_D_ar), np.array(Lo_P_ar), np.array(Lo_D_ar)
 
-def inductance_vs_VQD(mu: float, Ez: float, params: ModelParams, include_diamagnetic_term=True, consider_all_states=False, number_of_states=30, n_jobs=6, n_return=5):
+def inductance_vs_VQD(mu: float, Ez: float, params: ModelParams, include_diamagnetic_term=True, consider_all_states=False, number_of_states=30, n_jobs=6, n_return=2):
     V_QD_low = params.V_QD_low
     V_QD_high = params.V_QD_high
     V_QD_points = params.V_QD_points
@@ -402,7 +402,6 @@ def inductance_vs_VQD(mu: float, Ez: float, params: ModelParams, include_diamagn
             wf0_0 = wfs0_small[:, 1] if (eneg_ord0[0] > 0.0 and wfs0_small.shape[1] > 1) else wfs0_small[:, 0]
             E0_neg_0 = eneg_ord0[1] if (eneg_ord0[0] > 0.0 and eneg_ord0.shape[0] > 1) else eneg_ord0[0]
 
-            # initialize wf0_pi using wf0_0 to match your original approach
             wf0_pi = wf0_0
             E0_neg_pi, wf0_pi = Energy_tracker(enegpi, wfspi_small, wf0_pi)
             if E0_neg_pi * E0_neg_0 < 0.0:
