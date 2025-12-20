@@ -247,7 +247,7 @@ def Energy_tracker(energies, wavefunctions, initial_wf):
     overlaps = np.abs(np.matmul(np.conj(wf0).T,eigen_vec))
     idx = np.argmax(overlaps)
     new_E0 = eneg_vals[idx]
-    phase = np.vdot(np.conj(wf0).T, eigen_vec[:, idx])
+    phase = np.vdot(wf0, eigen_vec[:, idx])
     new_wf0 = -eigen_vec[:, idx] if phase<0.0 else eigen_vec[:, idx]
     return new_E0, new_wf0
 

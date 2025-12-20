@@ -337,7 +337,6 @@ def inductance_vs_phi(mu: float, Ez: float, params: ModelParams,
                 current_parity = "odd" if current_parity == "even" else "even"
             E0_neg, wf0 = Ep_neg, wfp
 
-        # swap only paramagnetic components when following odd branch; diamagnetic unchanged
         if current_parity == "odd":
             Le_P, Lo_P = Lo_P_raw, Le_P_raw
             Le_D, Lo_D = Lo_D_raw, Le_D_raw
