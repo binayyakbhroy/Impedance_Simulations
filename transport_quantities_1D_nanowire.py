@@ -19,7 +19,7 @@ def capacitance(energies: np.ndarray, eigenfunctions: np.ndarray, params: ModelP
     Length = params.Length
     w = params.w
     eta = params.eta
-    kappa = 0.032 #converts to femtofarads
+    kappa = 0.1602 #converts to femtofarads
     w0 = w + (1.0j*eta)
     Eneg_pos, Eneg_neg = [],[]
     qd_wfs_pos, qd_wfs_neg = [],[]
@@ -67,48 +67,200 @@ def capacitance(energies: np.ndarray, eigenfunctions: np.ndarray, params: ModelP
     C_value_odd += C_odd_1 + np.sum(C_odd_2)
     return np.real(kappa*(C_value_const+C_value_even)), np.real(kappa*(C_value_const+C_value_odd))
 
-def Capacitance_vs_phi(mu: float, Ez: float, params: ModelParams,
-                       consider_all_states=False, number_of_states=30,
-                       n_jobs=6, n_return=2):
+def Capacitance_vs_phi(
+    mu: float,
+    Ez: float,
+    params: ModelParams,
+    consider_all_states=False,
+    number_of_states=30,
+    n_jobs=6,
+    n_return=2,
+    return_parity_energies=False
+):
+
     phi_low = params.phi_low
     phi_high = params.phi_high
     phi_points = params.phi_points
-    phi_sweep = np.linspace(phi_low, phi_high, phi_points)
 
-    def _worker_cap_vs_phi(phi0, mu, Ez, params, consider_all_states, number_of_states, n_return):
-        p = deepcopy(params)
-        H_ang = construct_Hamil(mu, Ez, phi0, params=p, calc_pfaffian=False, No_QD=False)
-        eneg, wfs = Diagonalize(H_ang, extract_exact=consider_all_states, num_eigvals=number_of_states)
-        order = np.argsort(np.abs(eneg))
-        eneg_ord = eneg[order]
-        wfs_ord = wfs[:, order]
-        Ce_raw, Co_raw = capacitance(eneg_ord, wfs_ord, params=p)
-        ncols = min(n_return, wfs_ord.shape[1])
-        return eneg_ord[:ncols], wfs_ord[:, :ncols], Ce_raw, Co_raw
-
-    results = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_worker_cap_vs_phi)(phi0, mu, Ez, deepcopy(params), consider_all_states, number_of_states, n_return)
-        for phi0 in tqdm(phi_sweep)
+    phi_sweep = np.linspace(
+        phi_low,
+        phi_high,
+        phi_points
     )
 
-    Ce_ar, Co_ar = [], []
+    def _worker_cap_vs_phi(
+        phi0,
+        mu,
+        Ez,
+        params,
+        consider_all_states,
+        number_of_states,
+        n_return
+    ):
+
+        p = deepcopy(params)
+
+        H_ang = construct_Hamil(
+            mu,
+            Ez,
+            phi0,
+            params=p,
+            calc_pfaffian=False,
+            No_QD=False
+        )
+
+        eneg, wfs = Diagonalize(
+            H_ang,
+            extract_exact=consider_all_states,
+            num_eigvals=number_of_states
+        )
+
+        order = np.argsort(np.abs(eneg))
+
+        eneg_ord = eneg[order]
+        wfs_ord = wfs[:, order]
+
+        Ce_raw, Co_raw = capacitance(
+            eneg_ord,
+            wfs_ord,
+            params=p
+        )
+
+        ncols = min(
+            n_return,
+            wfs_ord.shape[1]
+        )
+        negative_energies = eneg_ord[
+            eneg_ord <= 0.0
+        ]
+
+        positive_energies = eneg_ord[
+            eneg_ord > 0.0
+        ]
+
+        E_even_raw = negative_energies[0]
+        E_odd_raw = positive_energies[0]
+
+        return (
+            eneg_ord[:ncols],
+            wfs_ord[:, :ncols],
+            Ce_raw,
+            Co_raw,
+            E_even_raw,
+            E_odd_raw
+        )
+
+    results = Parallel(
+        n_jobs=n_jobs,
+        backend="loky"
+    )(
+        delayed(_worker_cap_vs_phi)(
+            phi0,
+            mu,
+            Ez,
+            deepcopy(params),
+            consider_all_states,
+            number_of_states,
+            n_return
+        )
+        for phi0 in tqdm(
+            phi_sweep,
+            desc="capacitance phi sweep"
+        )
+    )
+
+    Ce_ar = []
+    Co_ar = []
+
+    Ee_ar = []
+    Eo_ar = []
+
     E0_neg = 0.0
     current_parity = "even"
     wf0 = None
-    for idx, (eneg_small, wfs_small, Ce_raw, Co_raw) in enumerate(results):
+
+    for idx, result in enumerate(results):
+
+        (
+            eneg_small,
+            wfs_small,
+            Ce_raw,
+            Co_raw,
+            Ee_raw,
+            Eo_raw
+        ) = result
+
         if idx == 0:
-            ordering0 = np.argsort(np.abs(eneg_small))
+
+            ordering0 = np.argsort(
+                np.abs(eneg_small)
+            )
+
             eneg_ord0 = eneg_small[ordering0]
-            wf0 = wfs_small[:, 1] if (eneg_ord0.shape[0] > 1 and eneg_ord0[0] > 0.0) else wfs_small[:, 0]
-            E0_neg = eneg_ord0[1] if (eneg_ord0.shape[0] > 1 and eneg_ord0[0] > 0.0) else eneg_ord0[0]
-        if idx != 0:
-            Ep_neg, wfp = Energy_tracker(eneg_small, wfs_small, wf0)
+
+            if (
+                eneg_ord0.shape[0] > 1
+                and eneg_ord0[0] > 0.0
+            ):
+                wf0 = wfs_small[:, 1]
+                E0_neg = eneg_ord0[1]
+
+            else:
+                wf0 = wfs_small[:, 0]
+                E0_neg = eneg_ord0[0]
+
+        else:
+
+            Ep_neg, wfp = Energy_tracker(
+                eneg_small,
+                wfs_small,
+                wf0
+            )
+
             if (E0_neg * Ep_neg) < 0.0:
-                current_parity = "odd" if current_parity == "even" else "even"
-            E0_neg, wf0 = Ep_neg, wfp
-        Ce, Co = (Co_raw, Ce_raw) if current_parity == "odd" else (Ce_raw, Co_raw)
-        Ce_ar.append(Ce); Co_ar.append(Co)
-    return np.array(Ce_ar), np.array(Co_ar)
+                current_parity = (
+                    "odd"
+                    if current_parity == "even"
+                    else "even"
+                )
+
+            E0_neg = Ep_neg
+            wf0 = wfp
+
+        # Apply the same fixed-parity assignment to both
+        # the capacitance and the corresponding energy.
+        if current_parity == "odd":
+
+            Ce = Co_raw
+            Co = Ce_raw
+
+            Ee = Eo_raw
+            Eo = Ee_raw
+
+        else:
+
+            Ce = Ce_raw
+            Co = Co_raw
+
+            Ee = Ee_raw
+            Eo = Eo_raw
+
+        Ce_ar.append(Ce)
+        Co_ar.append(Co)
+
+        Ee_ar.append(Ee)
+        Eo_ar.append(Eo)
+
+    C_even = np.array(Ce_ar)
+    C_odd = np.array(Co_ar)
+
+    if not return_parity_energies:
+        return C_even, C_odd
+
+    E_even = np.array(Ee_ar)
+    E_odd = np.array(Eo_ar)
+
+    return C_even, C_odd, E_even, E_odd
 
 def Capacitance_vs_VQD(mu: float, Ez: float, params: ModelParams, consider_all_states=False, number_of_states=30, n_jobs=6, n_return=2):
     V_QD_low = params.V_QD_low
@@ -200,7 +352,7 @@ def inductance(phi: float, energies: np.ndarray, wavefunctions: np.ndarray, para
     w_right = params.w_right
     w = params.w
     eta = params.eta
-    kappa = 1.48 #Converts to nano Henry inverse
+    kappa = 0.3698 #Converts to nano Henry inverse
     
     ordered_indices = np.argsort(np.abs(energies))
     ordered_energies = energies[ordered_indices]

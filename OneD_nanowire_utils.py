@@ -35,10 +35,13 @@ def onsite_h(i: int, H: np.ndarray, mu: float, Ez: float, params: ModelParams, N
         H[i][i+1] = H[i+1][i] = Ez
         H[i+2][i+3] = H[i+3][i+2] = -Ez
     else:
-        H[i][i] =  (0. - mu) + V_QD
-        H[i + 1][i + 1] = (0. - mu) + V_QD
+        H[i][i] = V_QD# "+ (0. - mu) " Excluding -mu for comparing to Loss paper
+        H[i + 1][i + 1] = V_QD
         H[i + 2][i + 2] = -H[i][i]
         H[i + 3][i + 3] = -H[i][i]
+        ##Zeeman term
+        H[i][i+1] = H[i+1][i] = Ez
+        H[i+2][i+3] = H[i+3][i+2] = -Ez
     return H
 
 def H_delta(i: int, H: np.ndarray, Ez: float, params: ModelParams, No_QD=True):
